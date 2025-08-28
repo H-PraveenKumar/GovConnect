@@ -1,0 +1,10 @@
+# Core FastAPI dependencies
+fastapi
+uvicorn[standard]
+
+# Data validation
+pydantic
+pydantic-settings
+
+# Environment variables
+python-dotenv

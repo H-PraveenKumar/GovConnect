@@ -1,0 +1,21 @@
+# Core FastAPI dependencies
+fastapi
+uvicorn[standard]
+python-multipart
+
+# MongoDB integration
+motor
+pymongo
+
+# Data validation and serialization
+pydantic
+pydantic-settings
+
+# Environment variables
+python-dotenv
+
+# HTTP client for OpenRouter API
+httpx
+
+# Utilities
+typing-extensions
