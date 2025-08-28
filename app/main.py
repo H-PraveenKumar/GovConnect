@@ -1,222 +1,223 @@
-"""
-Main FastAPI application for the Government Schemes Eligibility System
-"""
+import base64
 import logging
-from contextlib import asynccontextmanager
-from fastapi import FastAPI, HTTPException
+from app.routes.eligibility import router as eligibility_router
+from app.routes.schemes import router as schemes_router
+from app.routes.field_discovery import router as field_discovery_router
+from fastapi import FastAPI, HTTPException, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
-import uvicorn
 
-from .config import settings
-from .routes import schemes_router, eligibility_router, upload_router
-from .services.mongo_service import mongo_service
-from .services.llm_service import llm_service
+from app.database import connect_to_mongo, close_mongo_connection
+from app.models import UserProfile, CheckResponse, UploadSchemeRequest, UploadSchemeResponse, SchemeInfo
+from app.services import SchemeService
 
 # Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-)
+logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+from contextlib import asynccontextmanager
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Application lifespan manager"""
     # Startup
-    logger.info("Starting Government Schemes Eligibility System...")
-    
-    try:
-        # Connect to MongoDB
-        await mongo_service.connect()
-        logger.info("MongoDB connection established")
-        
-        # Test LLM service connection
-        llm_health = await llm_service.test_connection()
-        if llm_health["success"]:
-            logger.info("LLM service connection established")
-        else:
-            logger.warning(f"LLM service connection issue: {llm_health.get('error', 'Unknown error')}")
-        
-        logger.info("Application startup completed successfully")
-        
-    except Exception as e:
-        logger.error(f"Application startup failed: {e}")
-        raise
-    
+    await connect_to_mongo()
+    logger.info("Connected to MongoDB")
     yield
-    
     # Shutdown
-    logger.info("Shutting down Government Schemes Eligibility System...")
-    
-    try:
-        # Close MongoDB connection
-        await mongo_service.close()
-        logger.info("MongoDB connection closed")
-        
-        # Close LLM service connection
-        await llm_service.close()
-        logger.info("LLM service connection closed")
-        
-        logger.info("Application shutdown completed successfully")
-        
-    except Exception as e:
-        logger.error(f"Application shutdown error: {e}")
+    await close_mongo_connection()
+    logger.info("Disconnected from MongoDB")
 
 
-# Create FastAPI application
 app = FastAPI(
-    title=settings.app_name,
+    title="GovMatch API",
+    description="Backend service for government scheme eligibility matching",
     version="1.0.0",
-    description="""
-    A comprehensive system to automatically determine eligibility for government schemes 
-    by extracting rules from PDFs and matching user profiles.
-    
-    ## Features
-    
-    * **PDF Processing**: Upload and process government scheme PDFs
-    * **Rule Extraction**: Use AI to extract eligibility criteria from PDFs
-    * **Eligibility Checking**: Check user eligibility against all schemes
-    * **Real-time Results**: Get instant eligibility results with detailed explanations
-    
-    ## API Endpoints
-    
-    * **Schemes**: Manage government schemes and their rules
-    * **Eligibility**: Check user eligibility for schemes
-    * **Upload**: Upload and process new scheme PDFs
-    
-    ## Getting Started
-    
-    1. Upload government scheme PDFs using the upload endpoints
-    2. Wait for AI processing to extract eligibility rules
-    3. Use eligibility endpoints to check user eligibility
-    """,
-    docs_url="/docs",
-    redoc_url="/redoc",
     lifespan=lifespan
 )
 
 # Add CORS middleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=settings.get_cors_origins_list(),
+    allow_origins=["*"],  # Configure appropriately for production
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# Include routers
-app.include_router(schemes_router, prefix=settings.api_prefix)
-app.include_router(eligibility_router, prefix=settings.api_prefix)
-app.include_router(upload_router, prefix=settings.api_prefix)
 
-
-@app.get("/", tags=["root"])
+@app.get("/")
 async def root():
-    """Root endpoint with system information"""
-    return {
-        "message": "Welcome to Government Schemes Eligibility System",
-        "version": "1.0.0",
-        "status": "operational",
-        "docs": "/docs",
-        "redoc": "/redoc"
-    }
+    return {"message": "GovMatch API is running", "version": "1.0.0"}
 
 
-@app.get("/health", tags=["health"])
-async def health_check():
-    """System health check endpoint"""
+@app.post("/govmatch/check", response_model=CheckResponse)
+async def check_eligibility(request: dict):
+    """Check user eligibility against all schemes"""
     try:
-        # Check MongoDB health
-        mongo_healthy = await mongo_service.health_check()
+        # Validate profile data
+        if "profile" not in request:
+            raise HTTPException(status_code=400, detail="Missing 'profile' in request body")
         
-        # Check LLM service health
-        llm_healthy = await llm_service.test_connection()
+        profile_data = request["profile"]
+        profile = UserProfile(**profile_data)
         
-        health_status = {
-            "status": "healthy" if mongo_healthy and llm_healthy["success"] else "unhealthy",
-            "timestamp": "2024-01-15T10:30:00Z",  # This should be dynamic
-            "services": {
-                "mongodb": {
-                    "status": "healthy" if mongo_healthy else "unhealthy",
-                    "message": "MongoDB connection is working" if mongo_healthy else "MongoDB connection failed"
-                },
-                "llm_service": {
-                    "status": "healthy" if llm_healthy["success"] else "unhealthy",
-                    "message": llm_healthy.get("message", "LLM service is working") if llm_healthy["success"] else llm_healthy.get("error", "LLM service failed")
-                }
-            }
-        }
+        # Check eligibility
+        eligible_schemes, near_misses = await SchemeService.check_eligibility(profile)
         
-        if health_status["status"] == "healthy":
-            return health_status
-        else:
-            return JSONResponse(
-                content=health_status,
-                status_code=503
-            )
-            
-    except Exception as e:
-        logger.error(f"Health check failed: {e}")
-        return JSONResponse(
-            content={
-                "status": "unhealthy",
-                "error": str(e),
-                "timestamp": "2024-01-15T10:30:00Z"
-            },
-            status_code=503
+        return CheckResponse(
+            eligible_schemes=eligible_schemes,
+            near_misses=near_misses
         )
+        
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=f"Invalid profile data: {str(e)}")
+    except Exception as e:
+        logger.error(f"Error checking eligibility: {e}")
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
-@app.get("/info", tags=["info"])
-async def system_info():
-    """Get system information and configuration"""
-    return {
-        "system_name": settings.app_name,
-        "version": "1.0.0",
-        "debug_mode": settings.debug,
-        "api_prefix": settings.api_prefix,
-        "max_file_size": f"{settings.max_file_size / (1024*1024):.1f} MB",
-        "allowed_extensions": settings.get_allowed_extensions_list(),
-        "llm_model": settings.openrouter_model,
-        "mongodb_database": settings.mongodb_db_name
-    }
+@app.get("/govmatch/schemes", response_model=list[SchemeInfo])
+async def get_schemes():
+    """Get all schemes with metadata"""
+    try:
+        schemes = await SchemeService.get_all_schemes()
+        return schemes
+    except Exception as e:
+        logger.error(f"Error fetching schemes: {e}")
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
-@app.exception_handler(HTTPException)
-async def http_exception_handler(request, exc):
-    """Custom HTTP exception handler"""
-    return JSONResponse(
-        status_code=exc.status_code,
-        content={
-            "error": exc.detail,
-            "status_code": exc.status_code,
-            "path": request.url.path
-        }
-    )
+@app.post("/govmatch/upload_scheme", response_model=UploadSchemeResponse)
+async def upload_scheme(request: UploadSchemeRequest):
+    """Upload scheme PDF and extract rules (JSON body)"""
+    try:
+        if not request.pdf_base64:
+            raise HTTPException(status_code=400, detail="Missing pdf_base64 in request")
+        
+        success, message = await SchemeService.upload_scheme_pdf(
+            scheme_id=request.scheme_id,
+            title=request.title,
+            pdf_base64=request.pdf_base64
+        )
+        
+        if not success:
+            raise HTTPException(status_code=422, detail=message)
+        
+        return UploadSchemeResponse(
+            scheme_id=request.scheme_id,
+            rules_saved=success
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error uploading scheme: {e}")
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
-@app.exception_handler(Exception)
-async def general_exception_handler(request, exc):
-    """General exception handler"""
-    logger.error(f"Unhandled exception: {exc}")
-    return JSONResponse(
-        status_code=500,
-        content={
-            "error": "Internal server error",
-            "detail": str(exc) if settings.debug else "An unexpected error occurred",
-            "status_code": 500,
-            "path": request.url.path
-        }
-    )
+@app.post("/govmatch/upload_scheme_simple")
+async def upload_scheme_simple(
+    scheme_id: str,
+    title: str,
+    pdf_content: str
+):
+    """Simple PDF upload - accepts PDF content as string and converts to base64"""
+    try:
+        # If it's already base64, use it directly
+        # If it's raw PDF content, encode it
+        try:
+            # Try to decode to see if it's already base64
+            base64.b64decode(pdf_content)
+            pdf_base64 = pdf_content
+        except:
+            # Not base64, so encode it
+            pdf_base64 = base64.b64encode(pdf_content.encode()).decode('utf-8')
+        
+        success, message = await SchemeService.upload_scheme_pdf(
+            scheme_id=scheme_id,
+            title=title,
+            pdf_base64=pdf_base64
+        )
+        
+        if not success:
+            raise HTTPException(status_code=422, detail=message)
+        
+        return UploadSchemeResponse(
+            scheme_id=scheme_id,
+            rules_saved=success
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error uploading scheme: {e}")
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+@app.post("/govmatch/upload_scheme_file")
+async def upload_scheme_file(
+    scheme_id: str = Form(...),
+    title: str = Form(...),
+    file: UploadFile = File(...)
+):
+    """Upload scheme PDF and extract rules (multipart form)"""
+    try:
+        if not file.filename.lower().endswith('.pdf'):
+            raise HTTPException(status_code=400, detail="File must be a PDF")
+        
+        # Read file content
+        pdf_bytes = await file.read()
+        pdf_base64 = base64.b64encode(pdf_bytes).decode('utf-8')
+        
+        success, message = await SchemeService.upload_scheme_pdf(
+            scheme_id=scheme_id,
+            title=title,
+            pdf_base64=pdf_base64
+        )
+        
+        if not success:
+            raise HTTPException(status_code=422, detail=message)
+        
+        return UploadSchemeResponse(
+            scheme_id=scheme_id,
+            rules_saved=success
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error uploading scheme file: {e}")
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+
+@app.get("/govmatch/rebuild_rules/{scheme_id}")
+async def rebuild_rules(scheme_id: str, force: bool = True):
+    """Force rebuild rules for a specific scheme"""
+    try:
+        success, message = await SchemeService.rebuild_rules(scheme_id)
+        
+        if not success:
+            if "not found" in message.lower():
+                raise HTTPException(status_code=404, detail=message)
+            else:
+                raise HTTPException(status_code=422, detail=message)
+        
+        return {"scheme_id": scheme_id, "message": message}
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error rebuilding rules for {scheme_id}: {e}")
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+
+# Include field discovery router
+app.include_router(field_discovery_router, prefix="/govmatch", tags=["field-discovery"])
+
+@app.get("/health")
+async def health_check():
+    """Health check endpoint"""
+    return {"status": "healthy", "service": "govmatch-backend"}
 
 
 if __name__ == "__main__":
-    uvicorn.run(
-        "app.main:app",
-        host="0.0.0.0",
-        port=8000,
-        reload=settings.debug,
-        log_level=settings.log_level.lower()
-    )
+    import uvicorn
+    uvicorn.run("app.main:app", host="0.0.0.0", port=8000, reload=True)
