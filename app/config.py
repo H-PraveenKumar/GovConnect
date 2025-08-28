@@ -14,7 +14,7 @@ class Settings(BaseSettings):
     mongodb_url: str = Field(default="mongodb://localhost:27017", env="MONGODB_URL")
     mongodb_db_name: str = Field(default="schemes_db", env="MONGODB_DB_NAME")
     
-    # OpenRouter API Configuration
+    # OpenRouter/OpenAI API Configuration
     openrouter_api_key: str = Field(..., env="OPENROUTER_API_KEY")
     openrouter_base_url: str = Field(
         default="https://openrouter.ai/api/v1", 
@@ -24,12 +24,12 @@ class Settings(BaseSettings):
         default="anthropic/claude-3.5-sonnet", 
         env="OPENROUTER_MODEL"
     )
+
+    
     
     # Application Configuration
     app_name: str = Field(default="Government Schemes Eligibility System", env="APP_NAME")
     app_version: str = Field(default="1.0.0", env="APP_VERSION")
-    debug: bool = Field(default=True, env="DEBUG")
-    log_level: str = Field(default="INFO", env="LOG_LEVEL")
     
     # File Upload Configuration
     max_file_size: int = Field(default=10485760, env="MAX_FILE_SIZE")  # 10MB
@@ -42,9 +42,9 @@ class Settings(BaseSettings):
         env="CORS_ORIGINS"
     )
     
-    # Security
-    secret_key: str = Field(default="your_secret_key_here", env="SECRET_KEY")
-    access_token_expire_minutes: int = Field(default=30, env="ACCESS_TOKEN_EXPIRE_MINUTES")
+
+    
+
     
     # LLM Prompt Template
     llm_prompt_template: str = Field(
@@ -84,10 +84,14 @@ Here is the scheme text to analyze:
     )
     
     def get_allowed_extensions_list(self) -> List[str]:
-        """Get allowed extensions as a list"""
+        """Get allowed extensions as a list with proper dot prefix"""
         if ',' in self.allowed_extensions:
-            return [ext.strip() for ext in self.allowed_extensions.split(',')]
-        return [self.allowed_extensions.strip()]
+            extensions = [ext.strip() for ext in self.allowed_extensions.split(',')]
+        else:
+            extensions = [self.allowed_extensions.strip()]
+        
+        # Ensure all extensions have dot prefix
+        return [f".{ext}" if not ext.startswith('.') else ext for ext in extensions]
     
     def get_cors_origins_list(self) -> List[str]:
         """Get CORS origins as a list"""
@@ -98,7 +102,8 @@ Here is the scheme text to analyze:
     model_config = ConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",
-        case_sensitive=False
+        case_sensitive=False,
+        extra="ignore"
     )
 
 

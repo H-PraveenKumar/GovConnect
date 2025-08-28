@@ -91,7 +91,7 @@ async def upload_scheme_pdf(
         scheme = Scheme(
             scheme_id=scheme_id,
             scheme_name=scheme_name,
-            pdf_file_id=pdf_file_id,
+            pdf_file_id=str(pdf_file_id),  # Convert ObjectId to string
             source=source,
             status="processing"
         )

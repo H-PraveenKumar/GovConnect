@@ -16,7 +16,9 @@ class PDFService:
     """Service for PDF processing and text extraction"""
     
     def __init__(self):
-        self.supported_extensions = ['.pdf']
+        # Use the same extensions as config for consistency
+        from ..config import settings
+        self.supported_extensions = settings.get_allowed_extensions_list()
     
     def extract_text_pymupdf(self, pdf_content: bytes) -> str:
         """Extract text using PyMuPDF (fitz) - faster and more reliable"""

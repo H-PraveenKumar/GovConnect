@@ -2,6 +2,7 @@
 LLM service for OpenRouter API integration
 """
 import json
+import os
 import logging
 import asyncio
 from typing import Dict, Any, Optional
@@ -24,12 +25,18 @@ class LLMService:
         self.prompt_template = settings.llm_prompt_template
         
         # HTTP client with timeout
+        default_headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json"
+        }
+        # Support project-scoped OpenAI keys if OPENAI_PROJECT_ID is present
+        openai_project_id = os.getenv("OPENAI_PROJECT_ID")
+        if openai_project_id:
+            default_headers["OpenAI-Project"] = openai_project_id
+
         self.client = httpx.AsyncClient(
             timeout=httpx.Timeout(60.0),  # 60 seconds timeout
-            headers={
-                "Authorization": f"Bearer {self.api_key}",
-                "Content-Type": "application/json"
-            }
+            headers=default_headers
         )
     
     async def close(self):

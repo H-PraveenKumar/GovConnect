@@ -20,10 +20,11 @@ def validate_file_extension(filename: str, allowed_extensions: List[str] = None)
         True if extension is allowed, False otherwise
     """
     if allowed_extensions is None:
-        allowed_extensions = settings.allowed_extensions
+        allowed_extensions = settings.get_allowed_extensions_list()
     
     file_ext = Path(filename).suffix.lower()
-    return file_ext in [f".{ext}" for ext in allowed_extensions]
+    # Check if the file extension matches any of the allowed extensions
+    return file_ext in allowed_extensions
 
 
 def validate_file_size(file_size: int, max_size: int = None) -> bool:
